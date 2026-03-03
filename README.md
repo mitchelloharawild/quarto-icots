@@ -1,6 +1,9 @@
-# quarto-icots
+# ICOTS paper template for Quarto
 
 A [Quarto](https://quarto.org) extension for formatting papers submitted to [ICOTS (International Conference on Teaching Statistics)](https://icots12.oa-event.com/). The format produces a `.docx` output styled to ICOTS paper requirements.
+
+> [!NOTE]
+> This template was created with the assistance of [Claude](https://claude.ai) (Anthropic).
 
 ## Installing
 
@@ -73,6 +76,3 @@ date: last-modified
 
 Text of paper...
 ````
-
-> [!NOTE]
-> This template was created with the assistance of [Claude](https://claude.ai) (Anthropic).
