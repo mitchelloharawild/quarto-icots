@@ -3,15 +3,20 @@
 --   1. Inserts an empty BodyText paragraph before each heading
 --   2. Indents the first line of each body paragraph by 720 twips (1.27 cm / 0.5")
 --   3. Applies full (left + right) justification to body paragraphs
---   4. Inserts an empty BodyText paragraph before each list
---   5. Applies a 360-twip left indent to list-item paragraphs
+--   4. Inserts an empty BodyText paragraph before each top-level list
+--   5. Applies a depth-aware left indent to list-item paragraphs
+--      (360 twips per level: depth 0 → 360, depth 1 → 720, depth 2 → 1080, …)
 --   6. Does not indent the abstract (it uses the Abstract style which has no indent)
+--
+-- All structural transformation is done in the Pandoc (document-level) filter
+-- so that we walk the block tree manually and Pandoc never auto-traverses into
+-- nodes we have already processed.
 
 ------------------------------------------------------------------------
--- OpenXML snippets
+-- OpenXML helpers
 ------------------------------------------------------------------------
 
-local BODY_PPR  = '<w:pPr><w:jc w:val="both"/><w:ind w:firstLine="720"/></w:pPr>'
+local BODY_PPR = '<w:pPr><w:jc w:val="both"/><w:ind w:firstLine="720"/></w:pPr>'
 
 local function empty_body_para()
   return pandoc.RawBlock(
@@ -20,20 +25,16 @@ local function empty_body_para()
   )
 end
 
-------------------------------------------------------------------------
--- Para handler for normal body paragraphs (indent + justify)
-------------------------------------------------------------------------
-
-local function indent_para(el)
-  table.insert(el.content, 1,
-    pandoc.RawInline("openxml", BODY_PPR))
-  return el
+local function list_ppr(depth)
+  return pandoc.RawBlock(
+    "openxml",
+    string.format('<w:pPr><w:ind w:left="%d"/></w:pPr>', 360 * (depth + 1))
+  )
 end
 
 ------------------------------------------------------------------------
--- Returns true if the paragraph already has a RawInline that sets a
--- named paragraph style — used to detect the abstract paragraph, which
--- Pandoc/Quarto injects via a custom-style RawInline before we see it.
+-- Returns true when a Para/Plain already carries a named pStyle
+-- (e.g. "Abstract") injected by Pandoc as a RawInline.
 ------------------------------------------------------------------------
 
 local function has_pstyle(el, style)
@@ -49,18 +50,79 @@ local function has_pstyle(el, style)
 end
 
 ------------------------------------------------------------------------
--- Walk a list (BulletList / OrderedList) and prepend a RawBlock pPr
--- override to every Plain/Para inside each item.  Pandoc merges a
--- RawBlock("openxml", "<w:pPr>…</w:pPr>") that immediately precedes a
--- Para/Plain into that paragraph's own <w:pPr>.
+-- Forward declaration for mutual recursion
 ------------------------------------------------------------------------
 
-local function fix_list_item_blocks(blocks)
+local process_blocks  -- processes a flat block list, returns a new pandoc.List
+
+------------------------------------------------------------------------
+-- Process the blocks belonging to one list item at a given depth.
+-- Para/Plain nodes get a depth-aware pPr prepended.
+-- Nested lists are handled recursively (no spacer para for nested lists).
+-- Other block types are recursed into via process_blocks.
+------------------------------------------------------------------------
+
+local function process_item_blocks(blocks, depth)
   local out = pandoc.List()
   for _, block in ipairs(blocks) do
     if block.t == "Para" or block.t == "Plain" then
-      out:insert(pandoc.RawBlock("openxml", "<w:pPr><w:ind w:left=\"360\"/></w:pPr>"))
+      out:insert(list_ppr(depth))
       out:insert(block)
+    elseif block.t == "BulletList" or block.t == "OrderedList" then
+      -- nested list: no spacer, just recurse one level deeper
+      for i, item in ipairs(block.content) do
+        block.content[i] = process_item_blocks(item, depth + 1)
+      end
+      out:insert(block)
+    else
+      -- e.g. BlockQuote, Table inside a list item — recurse generically
+      out:extend(process_blocks({ block }, false))
+    end
+  end
+  return out
+end
+
+------------------------------------------------------------------------
+-- Walk a flat list of blocks, returning a new list.
+-- top_level=true  → insert spacer before lists and headings (after block 1)
+-- top_level=false → no spacers (used when recursing into non-list containers)
+------------------------------------------------------------------------
+
+process_blocks = function(blocks, top_level)
+  local out = pandoc.List()
+  for i, block in ipairs(blocks) do
+    if block.t == "Header" then
+      if top_level and i > 1 then
+        out:insert(empty_body_para())
+      end
+      out:insert(block)
+
+    elseif block.t == "BulletList" or block.t == "OrderedList" then
+      if top_level then
+        out:insert(empty_body_para())
+      end
+      for j, item in ipairs(block.content) do
+        block.content[j] = process_item_blocks(item, 0)
+      end
+      out:insert(block)
+
+    elseif block.t == "Para" or block.t == "Plain" then
+      -- Apply body indent/justify unless it already carries a named style
+      if not has_pstyle(block, "Abstract") then
+        table.insert(block.content, 1,
+          pandoc.RawInline("openxml", BODY_PPR))
+      end
+      out:insert(block)
+
+    elseif block.t == "Div" then
+      -- Recurse into Divs (e.g. the refs div, abstract div)
+      block.content = process_blocks(block.content, false)
+      out:insert(block)
+
+    elseif block.t == "BlockQuote" then
+      block.content = process_blocks(block.content, false)
+      out:insert(block)
+
     else
       out:insert(block)
     end
@@ -68,104 +130,35 @@ local function fix_list_item_blocks(blocks)
   return out
 end
 
-local function fix_list_items(list)
-  if not FORMAT:match("docx") then return nil end
-
-  for i, item in ipairs(list.content) do
-    list.content[i] = fix_list_item_blocks(item)
-  end
-
-  return list
-end
-
 ------------------------------------------------------------------------
--- Walk a Div that carries custom-style="Abstract" and apply
--- justify_para (no indent) to its paragraphs.
-------------------------------------------------------------------------
-
-local function justify_para(el)
-  -- no-op: abstract paragraphs keep their own style, no extra pPr needed
-  return el
-end
-
-local justify_only_filter = { Para = justify_para }
-
-function Div(el)
-  if not FORMAT:match("docx") then return nil end
-
-  local cs = el.attributes["custom-style"]
-  if cs == "Abstract" then
-    return pandoc.walk_block(el, justify_only_filter)
-  end
-end
-
-------------------------------------------------------------------------
--- Main Para filter — skip paragraphs that already carry the Abstract
--- style (injected by Pandoc from the YAML front-matter abstract field).
-------------------------------------------------------------------------
-
-function Para(el)
-  if FORMAT:match("docx") then
-    if has_pstyle(el, "Abstract") then
-      return el
-    end
-    return indent_para(el)
-  end
-  return el
-end
-
-------------------------------------------------------------------------
--- Block-level pass: insert spacers before headings and lists
-------------------------------------------------------------------------
-
-function Blocks(blocks)
-  if not FORMAT:match("docx") then return nil end
-
-  local result = pandoc.List()
-  for i, block in ipairs(blocks) do
-    if block.t == "Header" and i > 1 then
-      result:insert(empty_body_para())
-    end
-    if block.t == "BulletList" or block.t == "OrderedList" then
-      result:insert(empty_body_para())
-    end
-    result:insert(block)
-  end
-  return result
-end
-
-------------------------------------------------------------------------
--- List handlers — must be assigned AFTER the functions are defined
-------------------------------------------------------------------------
-
-BulletList  = fix_list_items
-OrderedList = fix_list_items
-
-------------------------------------------------------------------------
--- Append a "References" H2 heading before the bibliography div
+-- Document-level filter: single pass over the whole block tree.
+-- Pandoc's auto-traversal fires BEFORE Pandoc(), so we rely solely on
+-- the manual walk above — no BulletList / Para / Blocks filters are
+-- registered, avoiding all double-processing.
 ------------------------------------------------------------------------
 
 function Pandoc(doc)
   if not FORMAT:match("docx") then return nil end
 
-  -- Find an existing refs div and remove it so we can reinsert with heading
+  -- Separate out the refs div so we can append it after a heading
   local refs_div = nil
-  local filtered = pandoc.List()
+  local main = pandoc.List()
   for _, block in ipairs(doc.blocks) do
     if block.t == "Div" and block.identifier == "refs" then
       refs_div = block
     else
-      filtered:insert(block)
+      main:insert(block)
     end
   end
 
-  -- Append heading + refs div at the end
-  filtered:insert(empty_body_para())
-  filtered:insert(pandoc.Header(2, "References"))
+  local result = process_blocks(main, true)
+
+  result:insert(empty_body_para())
+  result:insert(pandoc.Header(2, "References"))
   if refs_div then
-    filtered:insert(refs_div)
+    result:insert(refs_div)
   end
 
-  doc.blocks = filtered
+  doc.blocks = result
   return doc
 end
