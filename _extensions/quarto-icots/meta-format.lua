@@ -257,8 +257,12 @@ function Meta(meta)
   extracted.authors  = meta["by-author"]   -- denormalized: affiliations already embedded
   extracted.abstract = meta.abstract
 
-  -- Return empty meta to suppress all default metadata rendering
-  return pandoc.Meta({})
+  -- Return empty meta to suppress all default metadata rendering,
+  -- but preserve bibliography/csl so citeproc can resolve citations.
+  return pandoc.Meta({
+    bibliography = meta.bibliography,
+    csl          = meta.csl,
+  })
 end
 
 function Pandoc(doc)

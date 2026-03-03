@@ -136,3 +136,32 @@ end
 
 BulletList  = fix_list_items
 OrderedList = fix_list_items
+
+------------------------------------------------------------------------
+-- Append a "References" H2 heading before the bibliography div
+------------------------------------------------------------------------
+
+function Pandoc(doc)
+  if not FORMAT:match("docx") then return nil end
+
+  -- Find an existing refs div and remove it so we can reinsert with heading
+  local refs_div = nil
+  local filtered = pandoc.List()
+  for _, block in ipairs(doc.blocks) do
+    if block.t == "Div" and block.identifier == "refs" then
+      refs_div = block
+    else
+      filtered:insert(block)
+    end
+  end
+
+  -- Append heading + refs div at the end
+  filtered:insert(empty_body_para())
+  filtered:insert(pandoc.Header(2, "References"))
+  if refs_div then
+    filtered:insert(refs_div)
+  end
+
+  doc.blocks = filtered
+  return doc
+end

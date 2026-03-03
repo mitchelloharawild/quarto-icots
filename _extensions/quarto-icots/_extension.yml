@@ -6,7 +6,7 @@ contributes:
   formats:
     docx:
       reference-doc: quarto-icots.docx
+      csl: apa.csl
       filters:
         - meta-format.lua
         - body-format.lua
-
