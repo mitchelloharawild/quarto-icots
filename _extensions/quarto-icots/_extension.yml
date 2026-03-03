@@ -8,4 +8,5 @@ contributes:
       reference-doc: quarto-icots.docx
       filters:
         - meta-format.lua
+        - body-format.lua
 

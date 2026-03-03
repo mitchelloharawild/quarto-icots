@@ -1,0 +1,138 @@
+-- body-format.lua
+-- Pandoc/Quarto Lua filter that:
+--   1. Inserts an empty BodyText paragraph before each heading
+--   2. Indents the first line of each body paragraph by 720 twips (1.27 cm / 0.5")
+--   3. Applies full (left + right) justification to body paragraphs
+--   4. Inserts an empty BodyText paragraph before each list
+--   5. Applies full justification only (no first-line indent) to list-item paragraphs
+--   6. Does not indent the abstract (it uses the Abstract style which has no indent)
+
+------------------------------------------------------------------------
+-- OpenXML snippets
+------------------------------------------------------------------------
+
+local BODY_PPR  = '<w:pPr><w:jc w:val="both"/><w:ind w:firstLine="720"/></w:pPr>'
+local LIST_PPR  = '<w:pPr><w:jc w:val="both"/></w:pPr>'
+
+local function empty_body_para()
+  return pandoc.RawBlock(
+    "openxml",
+    '<w:p><w:pPr><w:pStyle w:val="BodyText"/></w:pPr></w:p>'
+  )
+end
+
+------------------------------------------------------------------------
+-- Para handler for normal body paragraphs (indent + justify)
+------------------------------------------------------------------------
+
+local function indent_para(el)
+  table.insert(el.content, 1,
+    pandoc.RawInline("openxml", BODY_PPR))
+  return el
+end
+
+------------------------------------------------------------------------
+-- Para handler for list-item / abstract paragraphs (justify only)
+------------------------------------------------------------------------
+
+local function justify_para(el)
+  table.insert(el.content, 1,
+    pandoc.RawInline("openxml", LIST_PPR))
+  return el
+end
+
+------------------------------------------------------------------------
+-- Returns true if the paragraph already has a RawInline that sets a
+-- named paragraph style — used to detect the abstract paragraph, which
+-- Pandoc/Quarto injects via a custom-style RawInline before we see it.
+------------------------------------------------------------------------
+
+local function has_pstyle(el, style)
+  for _, inline in ipairs(el.content) do
+    if inline.t == "RawInline"
+      and inline.format == "openxml"
+      and inline.text:find('w:pStyle w:val="' .. style .. '"', 1, true)
+    then
+      return true
+    end
+  end
+  return false
+end
+
+------------------------------------------------------------------------
+-- Walk a list (BulletList / OrderedList) and apply justify_para to
+-- every Para inside it, without letting the outer Para filter touch them.
+------------------------------------------------------------------------
+
+local justify_only_filter = { Para = justify_para }
+
+local function fix_list_items(list)
+  if not FORMAT:match("docx") then return nil end
+
+  for i, item in ipairs(list.content) do
+    -- Each item is a List of blocks; walk it with the justify-only filter
+    local walked = {}
+    for _, block in ipairs(item) do
+      walked[#walked + 1] = pandoc.walk_block(block, justify_only_filter)
+    end
+    list.content[i] = walked
+  end
+
+  return list
+end
+
+------------------------------------------------------------------------
+-- Walk a Div that carries custom-style="Abstract" and apply
+-- justify_para (no indent) to its paragraphs.
+------------------------------------------------------------------------
+
+function Div(el)
+  if not FORMAT:match("docx") then return nil end
+
+  local cs = el.attributes["custom-style"]
+  if cs == "Abstract" then
+    return pandoc.walk_block(el, justify_only_filter)
+  end
+end
+
+------------------------------------------------------------------------
+-- Main Para filter — skip paragraphs that already carry the Abstract
+-- style (injected by Pandoc from the YAML front-matter abstract field).
+------------------------------------------------------------------------
+
+function Para(el)
+  if FORMAT:match("docx") then
+    if has_pstyle(el, "Abstract") then
+      return el
+    end
+    return indent_para(el)
+  end
+  return el
+end
+
+------------------------------------------------------------------------
+-- Block-level pass: insert spacers before headings and lists
+------------------------------------------------------------------------
+
+function Blocks(blocks)
+  if not FORMAT:match("docx") then return nil end
+
+  local result = pandoc.List()
+  for i, block in ipairs(blocks) do
+    if block.t == "Header" and i > 1 then
+      result:insert(empty_body_para())
+    end
+    if block.t == "BulletList" or block.t == "OrderedList" then
+      result:insert(empty_body_para())
+    end
+    result:insert(block)
+  end
+  return result
+end
+
+------------------------------------------------------------------------
+-- List handlers — must be assigned AFTER the functions are defined
+------------------------------------------------------------------------
+
+BulletList  = fix_list_items
+OrderedList = fix_list_items
