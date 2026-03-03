@@ -1,0 +1,36 @@
+---
+title: Title
+format:
+  quarto-icots-docx: default
+author:
+  - name: "Author1"
+    email: "Contact email"
+    affiliations:
+      - name: "Address1"
+  - name: "Author2"
+    affiliations:
+      - name: "Address2"
+abstract: >
+  Put your abstract here: this text is not to exceed 125 words. Do **not** start the abstract with the word “Abstract”.
+date: last-modified
+---
+
+## My First Heading
+
+Text of paper with first line indented by 1.25 (0.5”) and then continuing on to the next line like this.  The paragraph should be left and right justified.
+
+## Another Heading
+
+Text of paper with *emphasis*.
+
+- Bulleted list
+- Bulleted list
+- Bulleted list
+
+### Subheading
+
+Another piece of text that comes under this subheading.
+
+## Conclusion
+
+Text of the conclusion.
