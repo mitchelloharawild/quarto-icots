@@ -6,4 +6,6 @@ contributes:
   formats:
     docx:
       reference-doc: quarto-icots.docx
+      filters:
+        - meta-format.lua
 
