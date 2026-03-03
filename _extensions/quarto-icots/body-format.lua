@@ -4,7 +4,7 @@
 --   2. Indents the first line of each body paragraph by 720 twips (1.27 cm / 0.5")
 --   3. Applies full (left + right) justification to body paragraphs
 --   4. Inserts an empty BodyText paragraph before each list
---   5. Applies full justification only (no first-line indent) to list-item paragraphs
+--   5. Applies a 360-twip left indent to list-item paragraphs
 --   6. Does not indent the abstract (it uses the Abstract style which has no indent)
 
 ------------------------------------------------------------------------
@@ -12,7 +12,6 @@
 ------------------------------------------------------------------------
 
 local BODY_PPR  = '<w:pPr><w:jc w:val="both"/><w:ind w:firstLine="720"/></w:pPr>'
-local LIST_PPR  = '<w:pPr><w:jc w:val="both"/></w:pPr>'
 
 local function empty_body_para()
   return pandoc.RawBlock(
@@ -28,16 +27,6 @@ end
 local function indent_para(el)
   table.insert(el.content, 1,
     pandoc.RawInline("openxml", BODY_PPR))
-  return el
-end
-
-------------------------------------------------------------------------
--- Para handler for list-item / abstract paragraphs (justify only)
-------------------------------------------------------------------------
-
-local function justify_para(el)
-  table.insert(el.content, 1,
-    pandoc.RawInline("openxml", LIST_PPR))
   return el
 end
 
@@ -60,22 +49,30 @@ local function has_pstyle(el, style)
 end
 
 ------------------------------------------------------------------------
--- Walk a list (BulletList / OrderedList) and apply justify_para to
--- every Para inside it, without letting the outer Para filter touch them.
+-- Walk a list (BulletList / OrderedList) and prepend a RawBlock pPr
+-- override to every Plain/Para inside each item.  Pandoc merges a
+-- RawBlock("openxml", "<w:pPr>…</w:pPr>") that immediately precedes a
+-- Para/Plain into that paragraph's own <w:pPr>.
 ------------------------------------------------------------------------
 
-local justify_only_filter = { Para = justify_para }
+local function fix_list_item_blocks(blocks)
+  local out = pandoc.List()
+  for _, block in ipairs(blocks) do
+    if block.t == "Para" or block.t == "Plain" then
+      out:insert(pandoc.RawBlock("openxml", "<w:pPr><w:ind w:left=\"360\"/></w:pPr>"))
+      out:insert(block)
+    else
+      out:insert(block)
+    end
+  end
+  return out
+end
 
 local function fix_list_items(list)
   if not FORMAT:match("docx") then return nil end
 
   for i, item in ipairs(list.content) do
-    -- Each item is a List of blocks; walk it with the justify-only filter
-    local walked = {}
-    for _, block in ipairs(item) do
-      walked[#walked + 1] = pandoc.walk_block(block, justify_only_filter)
-    end
-    list.content[i] = walked
+    list.content[i] = fix_list_item_blocks(item)
   end
 
   return list
@@ -85,6 +82,13 @@ end
 -- Walk a Div that carries custom-style="Abstract" and apply
 -- justify_para (no indent) to its paragraphs.
 ------------------------------------------------------------------------
+
+local function justify_para(el)
+  -- no-op: abstract paragraphs keep their own style, no extra pPr needed
+  return el
+end
+
+local justify_only_filter = { Para = justify_para }
 
 function Div(el)
   if not FORMAT:match("docx") then return nil end
