@@ -49,6 +49,10 @@ author:
       - name: "Institution, Country"
 ```
 
+## Known Issues
+
+- **Figure and table captions are not centered**: Despite my best efforts, captions are not automatically centered in the output `.docx`. Before submission, you will need to manually center these captions in Word. See [#1](https://github.com/mitchelloharawild/quarto-icots/issues/1) for details.
+
 ## Example
 
 Here is the source code for a minimal sample document: [template.qmd](template.qmd).
